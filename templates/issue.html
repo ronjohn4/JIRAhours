@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}Tempo Detail{% endblock %}
+{% block body %}
+    <a href="{{ url_for('issues') }}">Home</a> |
+    <a href="https://levelsbeyond.atlassian.net/browse/{{parent_entry[0].key}}" target="_blank">JIRA</a>
+    <hr>
+    <h2>Parent Story/UAT</h2>
+    <table class="pairvalues">
+      <tr><td>key:</td><td>{{parent_entry[0].key}}</td></tr>
+      <tr><td>summary:</td><td>{{parent_entry[0].summary}}</td></tr>
+      <tr><td>status</td><td>{{parent_entry[0].status}}</td></tr>
+      <tr><td>customer:</td><td>{{parent_entry[0].customer}}</td></tr>
+      <tr><td>issuetype:</td><td>{{parent_entry[0].issuetype}}</td></tr>
+      <tr><td>totaltimespent:</td><td>{{'{0:0.2f}'.format(parent_entry[0].totaltimeSpentSeconds / 3600)}}
+          (not minutes, a fraction of an hour)</td></tr>
+    </table>
+
+    <hr>
+    <h2>Tempo time entries</h2>
+    <div class="table">
+        <div class="headerrow">
+            <div class="cell">Key</div>
+            <div class="cell" align="right">Hours</div>
+            <div class="cell">Summary</div>
+            <div class="cellwrap">Tempo Comment</div>
+        </div>
+        {% if child_entry|length > 0 %}
+            {% for entry in child_entry %}
+                <div class="row">
+                    <div class="cell">{{entry.key}}</div>
+                    <div class="cell" align="right">{{'{0:0.2f}'.format(entry.timeSpentSeconds / 3600)}}</div>
+                    <div class="cell">{{entry.summary}}</div>
+                    <div class="cellwrap">{{entry.tempocomment}}</div>
+                </div>
+            {% endfor %}
+            </div>
+        {% else %}
+            </div>
+            No time to display.
+        {% endif %}
+
+{% endblock %}

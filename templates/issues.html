@@ -1,0 +1,41 @@
+<!--Todo - html5 date controls don't display default date on first render-->
+{% extends "layout.html" %}
+{% block title %}JIRA List{% endblock %}
+{% block body %}
+    <a href="#" onclick="document.searchform.submit();return false;">search</a>
+    <form name=searchform class=searchform action="{{ url_for('issues') }}" method=post style="display: inline;">
+        <input type="date" name="startdate" value="{{search.startdate}}"/> -
+        <input type="date" name="enddate" value="{{search.enddate}}"/>
+    </form> |
+    <a href="{{ url_for('issuescsv') }}" xmlns="http://www.w3.org/1999/html">csv</a>
+    <hr>
+    Total Hours: {{"%0.2f" % (total_hours / 3600)|float}}
+    <hr>
+    <div class="table">
+        <div class="headerrow">
+            <div class="cell">Customer</div>
+            <div class="cell">Type</div>
+            <div class="cell">Status</div>
+            <div class="cell">Key</div>
+            <div class="cell" align="right">Hours</div>
+            <div class="cellwrap">Summary</div>
+        </div>
+
+        {% if entries|length > 0 %}
+            {% for entry in entries %}
+                <div class="row">
+                    <div class="cell">{{entry.customer}}</div>
+                    <div class="cell">{{entry.issuetype}}</div>
+                    <div class="cell">{{entry.status}}</div>
+                    <div class="cell"><a href="{{ url_for('issues') }}{{entry.key}}">{{entry.key}}</a></div>
+                    <div class="cell" align="right">{{'{0:0.2f}'.format(entry.totaltimeSpentSeconds / 3600)}}</div>
+                    <div class="cellwrap">{{entry.summary}}</div>
+                </div>
+            {% endfor %}
+            </div>
+        {% else %}
+            </div>
+            No time entered in the date range.
+        {% endif %}
+
+{% endblock %}
