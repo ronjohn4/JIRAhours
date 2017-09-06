@@ -11,6 +11,7 @@
       <tr><td>Status</td><td>{{parent_entry[0].status}}</td></tr>
       <tr><td>Customer:</td><td>{{parent_entry[0].customer}}</td></tr>
       <tr><td>Issue Type:</td><td>{{parent_entry[0].issuetype}}</td></tr>
+      <tr><td>Billable:</td><td>{{parent_entry[0].billstate}}</td></tr>
       <tr><td>Total Time Spent:</td><td>{{'{0:0.2f}'.format(parent_entry[0].totaltimeSpentSeconds / 3600)}}
           (not minutes, a fraction of an hour)</td></tr>
     </table>

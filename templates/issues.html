@@ -6,15 +6,30 @@
     <form name=searchform class=searchform action="{{ url_for('issues') }}" method=post style="display: inline;">
         <input type="date" name="startdate" value="{{search.startdate}}"/> -
         <input type="date" name="enddate" value="{{search.enddate}}"/>
-    </form> |
-    <a href="{{ url_for('issuescsv') }}" xmlns="http://www.w3.org/1999/html">csv</a>
+    </form>
+    {% if entries|length > 0  %}
+        |  <a href="{{ url_for('issuescsv') }}" xmlns="http://www.w3.org/1999/html">csv summary</a>
+        |  <a href="{{ url_for('issuescsvall') }}" xmlns="http://www.w3.org/1999/html">csv detail</a>
+    {% endif %}
     <hr>
-    Total Hours: {{"%0.2f" % (total_hours / 3600)|float}}
+    <div class="table">
+        <div class="headerrow">
+            <div class="cell">Billable</div>
+            <div class="cell">Non-billable</div>
+            <div class="cell">Total Hours</div>
+        </div>
+        <div class="row">
+            <div class="cell">{{"%0.2f" % (hours_billable / 3600)|float}}</div>
+            <div class="cell">{{"%0.2f" % (hours_nonbillable / 3600)|float}}</div>
+            <div class="cell">{{"%0.2f" % ((hours_billable + hours_nonbillable) / 3600)|float}}</div>
+        </div>
+    </div>
     <hr>
     <div class="table">
         <div class="headerrow">
             <div class="cell">Customer</div>
             <div class="cell">Type</div>
+            <div class="cell">Billable</div>
             <div class="cell">Status</div>
             <div class="cell">Key</div>
             <div class="cell" align="right">Hours</div>
@@ -26,6 +41,7 @@
                 <div class="row">
                     <div class="cell">{{entry.customer}}</div>
                     <div class="cell">{{entry.issuetype}}</div>
+                    <div class="cell">{{entry.billstate}}</div>
                     <div class="cell">{{entry.status}}</div>
                     <div class="cell"><a href="{{ url_for('issues') }}{{entry.key}}">{{entry.key}}</a></div>
                     <div class="cell" align="right">{{'{0:0.2f}'.format(entry.totaltimeSpentSeconds / 3600)}}</div>
