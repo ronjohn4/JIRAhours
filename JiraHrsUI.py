@@ -20,6 +20,8 @@ last_search = {
 entries_parent = []
 entries_child = []
 total_hours = 0
+hours_billable = 0
+hours_nonbillable = 0
 
 # secret_key is used for flash messages
 app.config.update(dict(
@@ -27,50 +29,23 @@ app.config.update(dict(
 ))
 
 
-from functools import wraps
-from flask import request, Response
+@app.route('/issues/csvall/', methods=['GET'])
+def issuescsvall():
+    csv_list = []
 
+    for v in entries_child:
+        csv_list.append({'customer': v['customer'],
+            'issuetype': v['issuetype'],
+            'key': v['key'],
+            'hours': '{0:0.2f}'.format(v['timeSpentSeconds'] / 3600),
+            'summary': v['summary'],''
+            'tempocomment': v['tempocomment']})
 
-def check_auth(username, password):
-    """This function is called to check if a username /
-    password combination is valid.
-    """
-    return username == 'admin' and password == 'secret2'
-
-def authenticate():
-    """Sends a 401 response that enables basic auth"""
-    return Response(
-    'Could not verify your access level for that URL.\n'
-    'You have to login with proper credentials', 401,
-    {'WWW-Authenticate': 'Basic realm="Login Required"'})
-
-def requires_auth(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        auth = request.authorization
-        if not auth or not check_auth(auth.username, auth.password):
-            return authenticate()
-        return f(*args, **kwargs)
-    return decorated
-
-
-
-@app.route('/issues/csv/', methods=['GET'])
-@requires_auth
-def issuescsv():
-    global entries_child
-
-    # todo - test for empty file, display an alert
-
-    print('entries_child - csv')
-    print(entries_child)
-
-    keys = entries_child[0].keys()
-
+    keys = csv_list[0].keys()
     output = io.StringIO()
     dict_writer = csv.DictWriter(output, keys)
     dict_writer.writeheader()
-    dict_writer.writerows(entries_child)
+    dict_writer.writerows(csv_list)
 
     response = make_response(output.getvalue())
     response.headers['Content-Disposition'] = 'attachment; filename={0}'. \
@@ -80,15 +55,40 @@ def issuescsv():
     return response
 
 
+@app.route('/issues/csv/', methods=['GET'])
+def issuescsv():
+    csv_list = []
+
+    for v in entries_parent:
+        csv_list.append({'customer': v['customer'],
+            'issuetype': v['issuetype'],
+            'key': v['key'],
+            'hours': '{0:0.2f}'.format(v['totaltimeSpentSeconds'] / 3600),
+            'summary': v['summary'],''
+            'tempocomment': None})
+
+    keys = csv_list[0].keys()
+    output = io.StringIO()
+    dict_writer = csv.DictWriter(output, keys)
+    dict_writer.writeheader()
+    dict_writer.writerows(csv_list)
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Disposition'] = 'attachment; filename={0}'. \
+        format('WFDtime{0}.csv'.format(datetime.strftime(datetime.now(), '%Y%m%d%H%M%S')))
+    response.mimetype = 'text/csv'
+
+    return response
+
 
 @app.route('/')
 @app.route('/issues/', methods=['GET', 'POST'])
-@requires_auth
 def issues():
     global entries_parent
     global entries_child
     global last_search
-    global total_hours
+    global hours_billable
+    global hours_nonbillable
 
     if request.method == 'POST':
         search = {'startdate': request.form["startdate"],
@@ -96,27 +96,21 @@ def issues():
         logging.debug('search:' + str(search))
 
         last_search = search
-        entries_parent, entries_child, total_hours = HrsGet('WFD', search['startdate'], search['enddate'])
+        entries_parent, entries_child, hours_billable, hours_nonbillable = HrsGet('WFD', search['startdate'],
+                                                                                  search['enddate'])
 
         # sort for presentation
         entries_parent = sorted(entries_parent, key=lambda k: (k['customer'] or "") + k['key'])
-        # entries_child = sorted(entries_child, key=lambda k: k['parentkey'] + k['key'])
-
-    return render_template('issues.html', entries=entries_parent, search=last_search, total_hours=total_hours)
-
+        entries_child = sorted(entries_child, key=lambda k: k['key'] + k['tempocomment'])
+    return render_template('issues.html', entries=entries_parent, search=last_search, hours_billable=hours_billable,
+                           hours_nonbillable=hours_nonbillable)
 
 
 @app.route('/issues/<id>')
-@requires_auth
 def issuesid(id=None):
     global entries_parent
     global entries_child
 
-    # print('id:', id)
-    # print('parent:', entries_parent)
-    # print('child:', entries_child)
-    # print('parent', [v for v in entries_parent if v['key'] == id])
-    # print('child', [v for v in entries_child if v['parentkey'] == id])
     return render_template('issue.html', parent_entry=[v for v in entries_parent if v['key'] == id],
                            child_entry=[v for v in entries_child if v['parentkey'] == id])
 
