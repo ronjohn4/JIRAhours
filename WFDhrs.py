@@ -9,16 +9,17 @@ tempo_list = []
 
 # Set to True to run offline.  There are a set of print statements below that output the mock data
 # when online.  The results can be copied and pasted into the lines that hardcode the mock data.
-_debug = False
+_offline = True
 
 
 def LoadJiraSub(keylist):
     global jira_sub_dict
 
     # if _debug then the mock data has already been set
-    if not  _debug:
+    if  not _offline:
         jira_url = 'https://levelsbeyond.atlassian.net/rest/api/2/search?' + \
-                   'jql=key%20in%20({0})&expand=names&fields=key,summary,customfield_13500,issuetype,parent,status&maxResults=500'
+                   'jql=key%20in%20({0})&expand=names&fields=key,summary,' \
+                   'customfield_13500,issuetype,parent,status&maxResults=500'
         url = jira_url.format(keylist)
 
         r = requests.get(url, auth=GetAuth())
@@ -26,7 +27,6 @@ def LoadJiraSub(keylist):
         json_return = json_return['issues']
 
         for entry in json_return:
-            # load final structure required
             jira_entry = {'key': entry['key'],
                           'parentkey': entry['fields']['parent']['key']
                          }
@@ -39,29 +39,32 @@ def LoadJiraParent(keylist):
     global jira_parent_dict
 
     # if _debug then the mock data has already been set
-    if  not _debug:
+    if  not _offline:
         jira_url = 'https://levelsbeyond.atlassian.net/rest/api/2/search?' + \
-                   'jql=key%20in%20({0})&expand=names&fields=key,summary,customfield_13500,issuetype,parent,status&maxResults=500'
+                        'jql=key%20in%20({0})&expand=names&fields=key,summary,' \
+                        'customfield_13500,customfield_13900,issuetype,parent,status&maxResults=500'
         url = jira_url.format(keylist)
+
         r = requests.get(url, auth=GetAuth())
         json_return = json.loads(r.text)
         json_return = json_return['issues']
 
         for entry in json_return:
-            # load final structure required
             jira_entry = {'key': entry['key'],
-                          # 'parentkey': entry['fields']['parent']['key'],
                           'customer': None,
                           'totaltimeSpentSeconds': 0,
                           'summary': entry['fields']['summary'],
-                          # 'parentsummary': entry['fields']['parent']['fields']['summary'],
                           'issuetype': entry['fields']['issuetype']['name'],
-                          'status': entry['fields']['status']['name']
-                          }
+                          'billstate': None,
+                          'status': entry['fields']['status']['name']}
 
             if 'customfield_13500' in entry['fields']:
                 if entry['fields']['customfield_13500'] != None:
                     jira_entry['customer'] = entry['fields']['customfield_13500']['value']
+
+            if 'customfield_13900' in entry['fields']:
+                if entry['fields']['customfield_13900'] != None:
+                    jira_entry['billstate'] = entry['fields']['customfield_13900']['value']
 
             jira_parent_dict[jira_entry['key']] = jira_entry
     return
@@ -87,12 +90,12 @@ def HrsGet(projectKey, fromDate, toDate):
     url = tempo_url.format(fromDate, toDate, projectKey)
     logging.debug('tempo_url: {0}'.format(url))
 
-    if  _debug:
+    if _offline:
         SetMockData()
+        # pass  #testing no results, comment the line above
     else:
         r = requests.get(url, auth=GetAuth())
         logging.debug('return status: {0}'.format(r.status_code))
-
         if r.status_code == 200:
             json_return = json.loads(r.text)
             logging.debug('length:{0}'.format(len(json_return)))
@@ -104,6 +107,7 @@ def HrsGet(projectKey, fromDate, toDate):
                 tempo_list.append({'id': entry['id'],
                                    'parentkey': entry['issue']['key'],
                                    'key': entry['issue']['key'],
+                                   'customer': None,
                                    'timeSpentSeconds': entry['timeSpentSeconds'],
                                    'issuetype': entry['issue']['issueType']['name'],
                                    'summary': entry['issue']['summary'],
@@ -121,7 +125,7 @@ def HrsGet(projectKey, fromDate, toDate):
     # build sub list
     keylistsub = []
     for entry in tempo_list:
-        if entry['issuetype'] == "Sub-Task":
+        if entry['issuetype'] == "Sub-task":
             keylistsub.append(entry['key'])
 
     if len(keylistsub) > 0:
@@ -133,18 +137,15 @@ def HrsGet(projectKey, fromDate, toDate):
     keylistparent = []
     tempo_list = tempo_list
     for entry in tempo_list:
-        if entry['issuetype'] == 'Sub-Task':
+        if entry['issuetype'] == 'Sub-task':
             entry['parentkey'] = jira_sub_dict[entry['key']]['parentkey']
             keylistparent.append(jira_sub_dict[entry['key']]['parentkey'])  #add parents to non sub-task list
 
 
     tempo_list = tempo_list
     for entry in tempo_list:
-        if entry['issuetype'] == "Sub-Task":
-            pass
-        else:
+        if entry['issuetype'] != "Sub-task":
             keylistparent.append(entry['key'])  #add all non sub-tasks to list
-
 
     if len(keylistparent) > 0:
         uniquelist = set(keylistparent)
@@ -154,28 +155,26 @@ def HrsGet(projectKey, fromDate, toDate):
 
     tempo_list = tempo_list
     total_hours = 0
+    hours_billable = 0
+    hours_nonbillable = 0
     for entry in tempo_list:
         # sum hours per JIRA ticket and total
         total_hours += entry['timeSpentSeconds']
         # add up Tempo time for each Jira ticket
         jira_parent_dict[entry['parentkey']]['totaltimeSpentSeconds'] += entry['timeSpentSeconds']
 
+        if jira_parent_dict[entry['parentkey']]['billstate'] in ('Billable','Billable but Not Billed'):
+            hours_billable += entry['timeSpentSeconds']
+        else:
+            hours_nonbillable += entry['timeSpentSeconds']
 
     for entry in tempo_list:
-        if entry['issuetype'] == "Sub-Task":
+        if entry['issuetype'] == "Sub-task":
             entry['parentkey'] = jira_sub_dict[entry['key']]['parentkey']
         else:
             entry['parentkey'] = entry['key']
 
-
-    # output mock data from real data to be copied into code. Uncomment line below,
-    # run a search, copy results and paste where mock data is set after the _debug test.
-    # print('jira_sub_dict')
-    # print(jira_sub_dict)
-    # print('jira_parent_dict')
-    # print(jira_parent_dict)
-    # print('tempo_list')
-    # print(tempo_list)
+        entry['customer'] = jira_parent_dict[entry['parentkey']]['customer']
 
 
     # convert JIRA to a list
@@ -187,21 +186,23 @@ def HrsGet(projectKey, fromDate, toDate):
     logging.debug(
         'Final - start:{0}, current:{1}, duration:{2}'.format(time_start, time_current, time_current - time_start))
 
-    # print('tempo_list')
+
+    # output mock data from real data to be copied into code. Uncomment line below,
+    # run a search, copy results and paste where mock data is set after the _debug test.
+    # print('Mock data')
     # for v in tempo_list:
-    #     print(v)
-
-    # print('jira_sub_dict')
+    #     print('tempo_list.append({0})'.format(v))
+    #
     # print(jira_sub_dict)
-    # for v in jira_sub_dict:
-    #     print(v)
-    #     print(v, v['key'])
+    # for k, v in jira_sub_dict.items():
+    #     print("jira_sub_dict['{0}'] =  {1}".format(k,v))
+    #
+    # for k, v in jira_parent_dict.items():
+    #     v['totaltimeSpentSeconds'] = 0
+    #     print("jira_parent_dict['{0}'] =  {1}".format(k,v))
 
-    # print('jira_parent_list')
-    # for v in jira_parent_list:
-    #     print(v)
 
-    return [jira_parent_list, tempo_list, total_hours]
+    return [jira_parent_list, tempo_list,  hours_billable, hours_nonbillable]
 
 
 def GetAuth():
@@ -213,10 +214,682 @@ def SetMockData():
     global jira_sub_dict
     global jira_parent_dict
 
-    tempo_list = [{'id': 120528, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation', 'tempocomment': 'Grooming', 'parentsummary': 'Estimation'}, {'id': 120633, 'parentkey': 'WFD-3040', 'key': 'WFD-3040', 'timeSpentSeconds': 10800, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2942 | Showtime | Clip Metadata Updates', 'tempocomment': 'Extremely slow to do anything with our connection method to Showtime. Also, some issues I had to investigate outside of updates I made for their request.', 'parentsummary': 'UAT | WFD-2942 | Showtime | Clip Metadata Updates'}, {'id': 120644, 'parentkey': 'WFD-3135', 'key': 'WFD-3171', 'timeSpentSeconds': 4500, 'issuetype': 'Sub-Task', 'summary': '(.5) Update batchMetaUpdater', 'tempocomment': 'Underestimated the groovy involvement with metadata on this one. Old logic was doing some funky stuff that took awhile to understand how to update properly.', 'parentsummary': '(.5) Update batchMetaUpdater'}, {'id': 120647, 'parentkey': 'WFD-3135', 'key': 'WFD-3172', 'timeSpentSeconds': 3600, 'issuetype': 'Sub-Task', 'summary': '(.5) Test batchMetaUpdater', 'tempocomment': 'Having Issues with metadata association not working in a groovy built query', 'parentsummary': '(.5) Test batchMetaUpdater'}, {'id': 120933, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'timeSpentSeconds': 2700, 'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD standup/sizing', 'parentsummary': 'Project Management'}, {'id': 120525, 'parentkey': 'WFD-3087', 'key': 'WFD-3217', 'timeSpentSeconds': 5040, 'issuetype': 'Sub-Task', 'summary': '(1) Alter workflows for testing', 'tempocomment': 'Updated workflows and imported to .85 server\n', 'parentsummary': '(1) Alter workflows for testing'}, {'id': 120535, 'parentkey': 'WFD-3061', 'key': 'WFD-3079', 'timeSpentSeconds': 5460, 'issuetype': 'Sub-Task', 'summary': 'Update Proxy Ingest', 'tempocomment': 'Updated the code for the proxy workflows.', 'parentsummary': 'Update Proxy Ingest'}, {'id': 120526, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 3600, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum and scoping', 'parentsummary': 'Meetings'}, {'id': 120527, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup + Extra discussion', 'parentsummary': 'Meetings'}, {'id': 120536, 'parentkey': 'WFD-3087', 'key': 'WFD-3150', 'timeSpentSeconds': 5400, 'issuetype': 'Sub-Task', 'summary': '(2) Test Archive Bucket Workflows', 'tempocomment': 'Testing completed for archive. There were some issues with the new build of RE on .85, those got resolved, but added time to testing', 'parentsummary': '(2) Test Archive Bucket Workflows'}, {'id': 120537, 'parentkey': 'WFD-3087', 'key': 'WFD-3152', 'timeSpentSeconds': 1320, 'issuetype': 'Sub-Task', 'summary': '(2) Test Restore Workflows', 'tempocomment': 'Testing completed up to this point', 'parentsummary': '(2) Test Restore Workflows'}, {'id': 120539, 'parentkey': 'WFD-3087', 'key': 'WFD-3154', 'timeSpentSeconds': 780, 'issuetype': 'Sub-Task', 'summary': '(1) Test Status Verification Workflows', 'tempocomment': 'Tested status verification as was able to', 'parentsummary': '(1) Test Status Verification Workflows'}, {'id': 120553, 'parentkey': 'WFD-3061', 'key': 'WFD-3080', 'timeSpentSeconds': 8940, 'issuetype': 'Sub-Task', 'summary': 'Update Source Ingest', 'tempocomment': 'Updated all the source ingest workflows.', 'parentsummary': 'Update Source Ingest'}, {'id': 120541, 'parentkey': 'WFD-3045', 'key': 'WFD-3045', 'timeSpentSeconds': 8100, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2954 Deluxe Digitized Fix Timecodes', 'tempocomment': 'Meeting with DK about results and new issues around clip creation\n\n-- Discussed issues with additional assets outside the scope of this workflow request that seem to be broken as well. The timecode fix will not work with these assets. ', 'parentsummary': 'UAT | WFD-2954 Deluxe Digitized Fix Timecodes'}, {'id': 120649, 'parentkey': 'WFD-2739', 'key': 'WFD-2739', 'timeSpentSeconds': 4860, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2372 | Updates to OAP', 'tempocomment': "UAT with client, identified some issues that had previously been 'unknowns' to me because we do not have visibility into OAP without the client. Remedied all issues with the exception of posting FrameRate to OAP. FrameRate is in the JSON sent to OAP, assuming that the field name for FrameRate may be different or the value isn't in the expected format. Waiting for docs or a time to talk to the Devs at OAP. ", 'parentsummary': 'UAT | WFD-2372 | Updates to OAP'}, {'id': 120635, 'parentkey': 'WFD-3061', 'key': 'WFD-3080', 'timeSpentSeconds': 3540, 'issuetype': 'Sub-Task', 'summary': 'Update Source Ingest', 'tempocomment': 'Started testing locally', 'parentsummary': 'Update Source Ingest'}, {'id': 120667, 'parentkey': 'WFD-2898', 'key': 'WFD-2898', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings (billable)', 'tempocomment': 'NHL Conversion - 2.1.5? 2.2?', 'parentsummary': 'Meetings (billable)'}, {'id': 120824, 'parentkey': 'WFD-3031', 'key': 'WFD-3031', 'timeSpentSeconds': 5400, 'issuetype': 'UAT', 'summary': 'UAT2 | WFD-2879 Modify MP5 workflows to accept Kafka messages', 'tempocomment': 'WFD-3031 DTV UAT - Modifications based on feedback for the Kafka metadata workflow', 'parentsummary': 'UAT2 | WFD-2879 Modify MP5 workflows to accept Kafka messages'}, {'id': 120825, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scoping', 'parentsummary': 'Meetings'}, {'id': 120826, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum', 'parentsummary': 'Meetings'}, {'id': 120827, 'parentkey': 'WFD-3031', 'key': 'WFD-3031', 'timeSpentSeconds': 4500, 'issuetype': 'UAT', 'summary': 'UAT2 | WFD-2879 Modify MP5 workflows to accept Kafka messages', 'tempocomment': 'WFD-3031 DTV uat and discussing with Bill', 'parentsummary': 'UAT2 | WFD-2879 Modify MP5 workflows to accept Kafka messages'}, {'id': 120828, 'parentkey': 'WFD-2454', 'key': 'WFD-2454', 'timeSpentSeconds': 2700, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2282 | Changes to LTFS Ingest process', 'tempocomment': 'WFD-2454 fixing issues for Howard Stern', 'parentsummary': 'UAT | WFD-2282 | Changes to LTFS Ingest process'}, {'id': 120829, 'parentkey': 'WFD-2454', 'key': 'WFD-2454', 'timeSpentSeconds': 900, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2282 | Changes to LTFS Ingest process', 'tempocomment': 'WFD-2454 discussing HS issue with DG', 'parentsummary': 'UAT | WFD-2282 | Changes to LTFS Ingest process'}, {'id': 120830, 'parentkey': 'WFD-3137', 'key': 'WFD-3222', 'timeSpentSeconds': 6300, 'issuetype': 'Sub-Task', 'summary': 'Upgrade VM to 2.1.4', 'tempocomment': 'trying to get 2.x vm up\n', 'parentsummary': 'Upgrade VM to 2.1.4'}, {'id': 120831, 'parentkey': 'WFD-3137', 'key': 'WFD-3199', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': '2016 photos with collection metadata', 'tempocomment': 'WFD-3199 going through workflows no changes needed', 'parentsummary': '2016 photos with collection metadata'}, {'id': 120832, 'parentkey': 'WFD-3137', 'key': 'WFD-3201', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': 'Custom Game Collection (x1 wf)', 'tempocomment': 'WFD-3201 making changes to workflow and testing to make sure logic works on 2.x', 'parentsummary': 'Custom Game Collection (x1 wf)'}, {'id': 120833, 'parentkey': 'WFD-3137', 'key': 'WFD-3202', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Game ID Fix (x2 wf) ', 'tempocomment': 'WFD-3202 no changes required. Dealt with image assets only', 'parentsummary': 'Game ID Fix (x2 wf) '}, {'id': 120834, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support', 'tempocomment': 'helped out engineer with categories stuff', 'parentsummary': 'Workflow Support'}, {'id': 120835, 'parentkey': 'WFD-3137', 'key': 'WFD-3202', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': 'Game ID Fix (x2 wf) ', 'tempocomment': 'WFD-3202 getting the low down on using (RE) java classes in groovy\nfixing workflow\ntrying to fix vm', 'parentsummary': 'Game ID Fix (x2 wf) '}, {'id': 120643, 'parentkey': 'WFD-3061', 'key': 'WFD-3070', 'timeSpentSeconds': 3480, 'issuetype': 'Sub-Task', 'summary': 'Update Clips', 'tempocomment': 'Tested a little over half the workflows locally.', 'parentsummary': 'Update Clips'}, {'id': 120636, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 1200, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup', 'parentsummary': 'Meetings'}, {'id': 120637, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation', 'tempocomment': 'Scoping', 'parentsummary': 'Estimation'}, {'id': 120638, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'timeSpentSeconds': 1080, 'issuetype': 'Time Tracking Task', 'summary': 'Other', 'tempocomment': 'Updating UAT tickets.', 'parentsummary': 'Other'}, {'id': 120639, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support', 'tempocomment': 'Robin', 'parentsummary': 'Workflow Support'}, {'id': 120640, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Helping Mitch with VM upgrade.', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120641, 'parentkey': 'WFD-3135', 'key': 'WFD-3135', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete', 'tempocomment': 'Helping Tyler with groovy stuff', 'parentsummary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete'}, {'id': 120642, 'parentkey': 'WFD-2898', 'key': 'WFD-2898', 'timeSpentSeconds': 1200, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings (billable)', 'tempocomment': 'AXS.TV - Helping Alex and Daniel write a story', 'parentsummary': 'Meetings (billable)'}, {'id': 120645, 'parentkey': 'WFD-3061', 'key': 'WFD-3061', 'timeSpentSeconds': 3600, 'issuetype': 'Story', 'summary': 'SCOPED(28): NHL 2.x Upgrade - INGEST', 'tempocomment': 'Help', 'parentsummary': 'SCOPED(28): NHL 2.x Upgrade - INGEST'}, {'id': 120646, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 2700, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Help', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120650, 'parentkey': 'WFD-3221', 'key': 'WFD-3221', 'timeSpentSeconds': 2700, 'issuetype': 'Story', 'summary': 'NOT READY - Archive/Restore Using XenData XML API', 'tempocomment': 'Worked with DGonzales and Dylan to get this ticket into a workable state. ', 'parentsummary': 'NOT READY - Archive/Restore Using XenData XML API'}, {'id': 120681, 'parentkey': 'WFD-3135', 'key': 'WFD-3172', 'timeSpentSeconds': 7200, 'issuetype': 'Sub-Task', 'summary': '(.5) Test batchMetaUpdater', 'tempocomment': 'Testing logic using other data objects, works with other asset types. Tried a query step instead of groovy, still breaks. Narrowed down the issue, submitted a bug [REACH-19472]. Created a test workflow and talked to Siri.', 'parentsummary': '(.5) Test batchMetaUpdater'}, {'id': 120712, 'parentkey': 'WFD-3135', 'key': 'WFD-3173', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': '(.5) Update Delete', 'tempocomment': 'Updates', 'parentsummary': '(.5) Update Delete'}, {'id': 120713, 'parentkey': 'WFD-3135', 'key': 'WFD-3174', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': '(.5) Test Delete', 'tempocomment': 'Tests', 'parentsummary': '(.5) Test Delete'}, {'id': 120763, 'parentkey': 'WFD-3228', 'key': 'WFD-3228', 'timeSpentSeconds': 4500, 'issuetype': 'Story', 'summary': 'Update Panel Clip WF to set multi-picklist metadata properly', 'tempocomment': 'Screenshare with Lody + make update + test', 'parentsummary': 'Update Panel Clip WF to set multi-picklist metadata properly'}, {'id': 120777, 'parentkey': 'WFD-3136', 'key': 'WFD-3175', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': '(.5) Update Game Collections', 'tempocomment': 'Reviewed workflows, no updates required.', 'parentsummary': '(.5) Update Game Collections'}, {'id': 120778, 'parentkey': 'WFD-3136', 'key': 'WFD-3177', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': '(1) Update update asset data', 'tempocomment': 'Dev - Less work than anticipated with the WF names', 'parentsummary': '(1) Update update asset data'}, {'id': 120779, 'parentkey': 'WFD-3136', 'key': 'WFD-3178', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': '(1) Test update asset data', 'tempocomment': 'Test', 'parentsummary': '(1) Test update asset data'}, {'id': 120934, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'timeSpentSeconds': 2700, 'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD standup/sizing', 'parentsummary': 'Project Management'}, {'id': 120693, 'parentkey': 'WFD-3061', 'key': 'WFD-3070', 'timeSpentSeconds': 9420, 'issuetype': 'Sub-Task', 'summary': 'Update Clips', 'tempocomment': 'Tested all clip workflows locally', 'parentsummary': 'Update Clips'}, {'id': 120757, 'parentkey': 'WFD-3061', 'key': 'WFD-3077', 'timeSpentSeconds': 4020, 'issuetype': 'Sub-Task', 'summary': 'Update Ongoing Image Ingest', 'tempocomment': 'Tested workflows locally.', 'parentsummary': 'Update Ongoing Image Ingest'}, {'id': 120714, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup', 'parentsummary': 'Meetings'}, {'id': 120758, 'parentkey': 'WFD-3135', 'key': 'WFD-3135', 'timeSpentSeconds': 2700, 'issuetype': 'Story', 'summary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete', 'tempocomment': 'github PR stuff', 'parentsummary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete'}, {'id': 120762, 'parentkey': 'WFD-3061', 'key': 'WFD-3081', 'timeSpentSeconds': 3000, 'issuetype': 'Sub-Task', 'summary': 'Update Misc Image Ingest', 'tempocomment': 'Tested workflows locally.', 'parentsummary': 'Update Misc Image Ingest'}, {'id': 120836, 'parentkey': 'WFD-3137', 'key': 'WFD-3203', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': 'Get All Asset Metadata ( x1 wf) ', 'tempocomment': 'WFD-3203 working on fixing extract metadata logic', 'parentsummary': 'Get All Asset Metadata ( x1 wf) '}, {'id': 120837, 'parentkey': 'WFD-3137', 'key': 'WFD-3222', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Upgrade VM to 2.1.4', 'tempocomment': 'WFD-3222 upgrading vm', 'parentsummary': 'Upgrade VM to 2.1.4'}, {'id': 120838, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum', 'parentsummary': 'Meetings'}, {'id': 120839, 'parentkey': 'WFD-3137', 'key': 'WFD-3222', 'timeSpentSeconds': 5400, 'issuetype': 'Sub-Task', 'summary': 'Upgrade VM to 2.1.4', 'tempocomment': 'upgrading vm from scratch to get a good install of 2.1.4', 'parentsummary': 'Upgrade VM to 2.1.4'}, {'id': 120840, 'parentkey': 'WFD-3137', 'key': 'WFD-3203', 'timeSpentSeconds': 3600, 'issuetype': 'Sub-Task', 'summary': 'Get All Asset Metadata ( x1 wf) ', 'tempocomment': 'WFD-3203 figuring out metadata objects in java', 'parentsummary': 'Get All Asset Metadata ( x1 wf) '}, {'id': 120841, 'parentkey': 'WFD-3135', 'key': 'WFD-3135', 'timeSpentSeconds': 1800, 'issuetype': 'Story', 'summary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete', 'tempocomment': 'WFD-3135 reviewing Tyler’s code', 'parentsummary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete'}, {'id': 120842, 'parentkey': 'WFD-3137', 'key': 'WFD-3203', 'timeSpentSeconds': 3600, 'issuetype': 'Sub-Task', 'summary': 'Get All Asset Metadata ( x1 wf) ', 'tempocomment': 'WFD-3203  figuring out metadata objects in java', 'parentsummary': 'Get All Asset Metadata ( x1 wf) '}, {'id': 120843, 'parentkey': 'WFD-3137', 'key': 'WFD-3204', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': 'Submission Metadata (x4 wf)', 'tempocomment': 'WFD-3204 fixing metadata references', 'parentsummary': 'Submission Metadata (x4 wf)'}, {'id': 120844, 'parentkey': 'WFD-3137', 'key': 'WFD-3204', 'timeSpentSeconds': 8100, 'issuetype': 'Sub-Task', 'summary': 'Submission Metadata (x4 wf)', 'tempocomment': 'WFD-3204 going down a rabbit hole and having Kemm drop me a ladder', 'parentsummary': 'Submission Metadata (x4 wf)'}, {'id': 120764, 'parentkey': 'WFD-3061', 'key': 'WFD-3078', 'timeSpentSeconds': 1860, 'issuetype': 'Sub-Task', 'summary': 'Update Deluxe Replacement Ingest', 'tempocomment': 'Tested locally.', 'parentsummary': 'Update Deluxe Replacement Ingest'}, {'id': 120765, 'parentkey': 'WFD-3061', 'key': 'WFD-3079', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Update Proxy Ingest', 'tempocomment': 'Started testing.', 'parentsummary': 'Update Proxy Ingest'}, {'id': 120766, 'parentkey': 'WFD-3228', 'key': 'WFD-3228', 'timeSpentSeconds': 1800, 'issuetype': 'Story', 'summary': 'Update Panel Clip WF to set multi-picklist metadata properly', 'tempocomment': 'Working out github and version/release', 'parentsummary': 'Update Panel Clip WF to set multi-picklist metadata properly'}, {'id': 120767, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 1800, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Help', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120768, 'parentkey': 'WFD-3087', 'key': 'WFD-3087', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Archive and Restore', 'tempocomment': 'Looking over PR', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Archive and Restore'}, {'id': 120770, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 1200, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup', 'parentsummary': 'Meetings'}, {'id': 120769, 'parentkey': 'WFD-3061', 'key': 'WFD-3061', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(28): NHL 2.x Upgrade - INGEST', 'tempocomment': 'Help', 'parentsummary': 'SCOPED(28): NHL 2.x Upgrade - INGEST'}, {'id': 120771, 'parentkey': 'WFD-3135', 'key': 'WFD-3135', 'timeSpentSeconds': 600, 'issuetype': 'Story', 'summary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete', 'tempocomment': 'Helped with more Groovy code.', 'parentsummary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete'}, {'id': 120772, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 600, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Helped more with VM upgrade.', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120773, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'timeSpentSeconds': 1200, 'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support', 'tempocomment': 'Robin', 'parentsummary': 'Workflow Support'}, {'id': 120863, 'parentkey': 'WFD-3230', 'key': 'WFD-3230', 'timeSpentSeconds': 3600, 'issuetype': 'Story', 'summary': 'SCOPE(12) - Repair Timelines with null or invalid Primary Track', 'tempocomment': 'Looking into the timline track/clip issue', 'parentsummary': 'SCOPE(12) - Repair Timelines with null or invalid Primary Track'}, {'id': 120774, 'parentkey': 'WFD-3040', 'key': 'WFD-3040', 'timeSpentSeconds': 600, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2942 | Showtime | Clip Metadata Updates', 'tempocomment': 'PR review', 'parentsummary': 'UAT | WFD-2942 | Showtime | Clip Metadata Updates'}, {'id': 120775, 'parentkey': 'WFD-3135', 'key': 'WFD-3135', 'timeSpentSeconds': 1800, 'issuetype': 'Story', 'summary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete', 'tempocomment': '2 PR reviews.', 'parentsummary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete'}, {'id': 120801, 'parentkey': 'WFD-3228', 'key': 'WFD-3228', 'timeSpentSeconds': 7200, 'issuetype': 'Story', 'summary': 'Update Panel Clip WF to set multi-picklist metadata properly', 'tempocomment': "Working with Lody's slow machine to test. Made fixes. Had Stephan help me release app-workflows", 'parentsummary': 'Update Panel Clip WF to set multi-picklist metadata properly'}, {'id': 120805, 'parentkey': 'WFD-3137', 'key': 'WFD-3200', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Clean Metadata (x53 wf)', 'tempocomment': 'Basic Changes', 'parentsummary': 'Clean Metadata (x53 wf)'}, {'id': 120869, 'parentkey': 'WFD-3136', 'key': 'WFD-3136', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(9): NHL 2.x Upgrade - Game Collection, Update Asset Data', 'tempocomment': 'Github stuff', 'parentsummary': 'SCOPED(9): NHL 2.x Upgrade - Game Collection, Update Asset Data'}, {'id': 120870, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Github stuff', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120935, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'timeSpentSeconds': 2700, 'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD standup/sizing', 'parentsummary': 'Project Management'}, {'id': 120967, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'timeSpentSeconds': 3600, 'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD - GitPrime stats for last week', 'parentsummary': 'Project Management'}, {'id': 120968, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD - update customers and associated Quick Searches ', 'parentsummary': 'Project Management'}, {'id': 120969, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'timeSpentSeconds': 7200, 'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD - sprint planning', 'parentsummary': 'Project Management'}, {'id': 120806, 'parentkey': 'WFD-3061', 'key': 'WFD-3079', 'timeSpentSeconds': 2820, 'issuetype': 'Sub-Task', 'summary': 'Update Proxy Ingest', 'tempocomment': 'Tested workflows locally.', 'parentsummary': 'Update Proxy Ingest'}, {'id': 120800, 'parentkey': 'WFD-3011', 'key': 'WFD-3011', 'timeSpentSeconds': 7200, 'issuetype': 'UAT', 'summary': 'UAT | WFD-2364 | Ravens: Increment Duplicate Asset + Filenames', 'tempocomment': 'Had a call with Brad and Jack. Moved workflows over to production. Did some testing and made some tweaks.', 'parentsummary': 'UAT | WFD-2364 | Ravens: Increment Duplicate Asset + Filenames'}, {'id': 120802, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 7200, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Helping work through Groovy issues. Found a bug with Mitch to submit, testing MetadataService functions.', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120803, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'standup', 'parentsummary': 'Meetings'}, {'id': 120804, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation', 'tempocomment': 'Grooming', 'parentsummary': 'Estimation'}, {'id': 120862, 'parentkey': 'WFD-3061', 'key': 'WFD-3080', 'timeSpentSeconds': 4980, 'issuetype': 'Sub-Task', 'summary': 'Update Source Ingest', 'tempocomment': 'Tested all workflows locally. Made a PR to Github.', 'parentsummary': 'Update Source Ingest'}, {'id': 120807, 'parentkey': 'WFD-3137', 'key': 'WFD-3209', 'timeSpentSeconds': 1800, 'issuetype': 'Sub-Task', 'summary': 'Update Image Game IDs ( x1 wf )', 'tempocomment': 'Update Groovy and Test', 'parentsummary': 'Update Image Game IDs ( x1 wf )'}, {'id': 120811, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'Testing more metadata groovy stuff', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120815, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 7200, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Planning', 'parentsummary': 'Meetings'}, {'id': 120845, 'parentkey': 'WFD-3137', 'key': 'WFD-3204', 'timeSpentSeconds': 7200, 'issuetype': 'Sub-Task', 'summary': 'Submission Metadata (x4 wf)', 'tempocomment': 'WFD-3204 fixing the workflows', 'parentsummary': 'Submission Metadata (x4 wf)'}, {'id': 120846, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum', 'parentsummary': 'Meetings'}, {'id': 120847, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scoping', 'parentsummary': 'Meetings'}, {'id': 120848, 'parentkey': 'WFD-3137', 'key': 'WFD-3204', 'timeSpentSeconds': 4500, 'issuetype': 'Sub-Task', 'summary': 'Submission Metadata (x4 wf)', 'tempocomment': 'WFD-3204 finishing fixing the workflows', 'parentsummary': 'Submission Metadata (x4 wf)'}, {'id': 120849, 'parentkey': 'WFD-3137', 'key': 'WFD-3204', 'timeSpentSeconds': 2700, 'issuetype': 'Sub-Task', 'summary': 'Submission Metadata (x4 wf)', 'tempocomment': 'writing up and submitting bug REACH-19495', 'parentsummary': 'Submission Metadata (x4 wf)'}, {'id': 120850, 'parentkey': 'WFD-3137', 'key': 'WFD-3204', 'timeSpentSeconds': 2700, 'issuetype': 'Sub-Task', 'summary': 'Submission Metadata (x4 wf)', 'tempocomment': 'WFD-3204 fixing the workflows', 'parentsummary': 'Submission Metadata (x4 wf)'}, {'id': 120851, 'parentkey': 'WFD-3137', 'key': 'WFD-3205', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Update Category On Image WIth Game ID (x2 wf) ', 'tempocomment': 'WFD-3205 reviewing workflows for changes. No changes needed', 'parentsummary': 'Update Category On Image WIth Game ID (x2 wf) '}, {'id': 120852, 'parentkey': 'WFD-3137', 'key': 'WFD-3206', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Update From Exif (x1 wf)', 'tempocomment': 'WFD-3206 reviewing for changes. No changes needed', 'parentsummary': 'Update From Exif (x1 wf)'}, {'id': 120853, 'parentkey': 'WFD-3137', 'key': 'WFD-3207', 'timeSpentSeconds': 900, 'issuetype': 'Sub-Task', 'summary': 'Update From Media Info (x1 wf)', 'tempocomment': 'WFD-3207 reviewing. Changed subject to VideoAssetMaster. Corrected how the mezzanine file was being accessed.', 'parentsummary': 'Update From Media Info (x1 wf)'}, {'id': 120854, 'parentkey': 'WFD-3137', 'key': 'WFD-3210', 'timeSpentSeconds': 3600, 'issuetype': 'Sub-Task', 'summary': 'Update Picklist ( x1 wf )', 'tempocomment': 'WFD-3210 reviewing and updating picklist to use the most recent java functions', 'parentsummary': 'Update Picklist ( x1 wf )'}, {'id': 120855, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 5400, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'grooming', 'parentsummary': 'Meetings'}, {'id': 120856, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 900, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'timetracking', 'parentsummary': 'Meetings'}, {'id': 120858, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 3000, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'PR review.', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120859, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 600, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'PR review', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120860, 'parentkey': 'WFD-3137', 'key': 'WFD-3137', 'timeSpentSeconds': 600, 'issuetype': 'Story', 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'tempocomment': 'PR review.', 'parentsummary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata'}, {'id': 120861, 'parentkey': 'WFD-3136', 'key': 'WFD-3136', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPED(9): NHL 2.x Upgrade - Game Collection, Update Asset Data', 'tempocomment': 'PR review.', 'parentsummary': 'SCOPED(9): NHL 2.x Upgrade - Game Collection, Update Asset Data'}, {'id': 120864, 'parentkey': 'WFD-3230', 'key': 'WFD-3230', 'timeSpentSeconds': 900, 'issuetype': 'Story', 'summary': 'SCOPE(12) - Repair Timelines with null or invalid Primary Track', 'tempocomment': 'Talking with Bill about this issue.', 'parentsummary': 'SCOPE(12) - Repair Timelines with null or invalid Primary Track'}, {'id': 120865, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 600, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup', 'parentsummary': 'Meetings'}, {'id': 120866, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'timeSpentSeconds': 1200, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation', 'tempocomment': 'Scoping', 'parentsummary': 'Estimation'}, {'id': 120867, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'timeSpentSeconds': 3600, 'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Planning', 'parentsummary': 'Meetings'}, {'id': 120868, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support', 'tempocomment': 'Robin', 'parentsummary': 'Workflow Support'}]
-
-
-    jira_parent_dict = {'WFD-3230': {'key': 'WFD-3230', 'customer': 'NHL', 'totaltimeSpentSeconds': 4500, 'summary': 'SCOPE(12) - Repair Timelines with null or invalid Primary Track', 'issuetype': 'Story', 'status': 'UAT'}, 'WFD-3228': {'key': 'WFD-3228', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 13500, 'summary': 'Update Panel Clip WF to set multi-picklist metadata properly', 'issuetype': 'Story', 'status': 'Done'}, 'WFD-3221': {'key': 'WFD-3221', 'customer': 'AXS TV', 'totaltimeSpentSeconds': 2700, 'summary': 'NOT READY - Archive/Restore Using XenData XML API', 'issuetype': 'Story', 'status': 'New'}, 'WFD-3137': {'key': 'WFD-3137', 'customer': 'NHL', 'totaltimeSpentSeconds': 82200, 'summary': 'SCOPED(24): NHL 2.x Upgrade - Update Metadata', 'issuetype': 'Story', 'status': 'UAT'}, 'WFD-3136': {'key': 'WFD-3136', 'customer': 'NHL', 'totaltimeSpentSeconds': 6300, 'summary': 'SCOPED(9): NHL 2.x Upgrade - Game Collection, Update Asset Data', 'issuetype': 'Story', 'status': 'UAT'}, 'WFD-3135': {'key': 'WFD-3135', 'customer': 'NHL', 'totaltimeSpentSeconds': 25800, 'summary': 'SCOPED(8): NHL 2.x Upgrade - Add Asset to Collection, BatchMetaUpdater, and Delete', 'issuetype': 'Story', 'status': 'UAT'}, 'WFD-3087': {'key': 'WFD-3087', 'customer': 'NHL', 'totaltimeSpentSeconds': 13440, 'summary': 'SCOPED(24): NHL 2.x Upgrade - Archive and Restore', 'issuetype': 'Story', 'status': 'UAT'}, 'WFD-3061': {'key': 'WFD-3061', 'customer': 'NHL', 'totaltimeSpentSeconds': 52920, 'summary': 'SCOPED(28): NHL 2.x Upgrade - INGEST', 'issuetype': 'Story', 'status': 'UAT'}, 'WFD-3045': {'key': 'WFD-3045', 'customer': 'NHL', 'totaltimeSpentSeconds': 8100, 'summary': 'UAT | WFD-2954 Deluxe Digitized Fix Timecodes', 'issuetype': 'UAT', 'status': 'Done'}, 'WFD-3040': {'key': 'WFD-3040', 'customer': 'Showtime NY', 'totaltimeSpentSeconds': 11400, 'summary': 'UAT | WFD-2942 | Showtime | Clip Metadata Updates', 'issuetype': 'UAT', 'status': 'Done'}, 'WFD-3031': {'key': 'WFD-3031', 'customer': 'DirecTV DFW', 'totaltimeSpentSeconds': 9900, 'summary': 'UAT2 | WFD-2879 Modify MP5 workflows to accept Kafka messages', 'issuetype': 'UAT', 'status': 'Done'}, 'WFD-3011': {'key': 'WFD-3011', 'customer': 'Baltimore Ravens', 'totaltimeSpentSeconds': 7200, 'summary': 'UAT | WFD-2364 | Ravens: Increment Duplicate Asset + Filenames', 'issuetype': 'UAT', 'status': 'Done'}, 'WFD-2898': {'key': 'WFD-2898', 'customer': None, 'totaltimeSpentSeconds': 3000, 'summary': 'Meetings (billable)', 'issuetype': 'Time Tracking Task', 'status': 'New'}, 'WFD-2739': {'key': 'WFD-2739', 'customer': 'WBITV', 'totaltimeSpentSeconds': 4860, 'summary': 'UAT | WFD-2372 | Updates to OAP', 'issuetype': 'UAT', 'status': 'In Progress'}, 'WFD-2454': {'key': 'WFD-2454', 'customer': 'Sirius XM (Howard Stern)', 'totaltimeSpentSeconds': 3600, 'summary': 'UAT | WFD-2282 | Changes to LTFS Ingest process', 'issuetype': 'UAT', 'status': 'In Progress'}, 'WFD-2432': {'key': 'WFD-2432', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 5700, 'summary': 'Estimation', 'issuetype': 'Time Tracking Task', 'status': 'New'}, 'WFD-2024': {'key': 'WFD-2024', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 1080, 'summary': 'Other', 'issuetype': 'Time Tracking Task', 'status': 'New'}, 'WFD-340': {'key': 'WFD-340', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 20700, 'summary': 'Project Management', 'issuetype': 'Time Tracking Task', 'status': 'New'}, 'WFD-312': {'key': 'WFD-312', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 5700, 'summary': 'Workflow Support', 'issuetype': 'Time Tracking Task', 'status': 'New'}, 'WFD-311': {'key': 'WFD-311', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 34500, 'summary': 'Meetings', 'issuetype': 'Time Tracking Task', 'status': 'New'}}
-
-
-    jira_sub_dict = {'WFD-3222': {'key': 'WFD-3222', 'parentkey': 'WFD-3137'}, 'WFD-3217': {'key': 'WFD-3217', 'parentkey': 'WFD-3087'}, 'WFD-3210': {'key': 'WFD-3210', 'parentkey': 'WFD-3137'}, 'WFD-3209': {'key': 'WFD-3209', 'parentkey': 'WFD-3137'}, 'WFD-3207': {'key': 'WFD-3207', 'parentkey': 'WFD-3137'}, 'WFD-3206': {'key': 'WFD-3206', 'parentkey': 'WFD-3137'}, 'WFD-3205': {'key': 'WFD-3205', 'parentkey': 'WFD-3137'}, 'WFD-3204': {'key': 'WFD-3204', 'parentkey': 'WFD-3137'}, 'WFD-3203': {'key': 'WFD-3203', 'parentkey': 'WFD-3137'}, 'WFD-3202': {'key': 'WFD-3202', 'parentkey': 'WFD-3137'}, 'WFD-3201': {'key': 'WFD-3201', 'parentkey': 'WFD-3137'}, 'WFD-3200': {'key': 'WFD-3200', 'parentkey': 'WFD-3137'}, 'WFD-3199': {'key': 'WFD-3199', 'parentkey': 'WFD-3137'}, 'WFD-3178': {'key': 'WFD-3178', 'parentkey': 'WFD-3136'}, 'WFD-3177': {'key': 'WFD-3177', 'parentkey': 'WFD-3136'}, 'WFD-3175': {'key': 'WFD-3175', 'parentkey': 'WFD-3136'}, 'WFD-3174': {'key': 'WFD-3174', 'parentkey': 'WFD-3135'}, 'WFD-3173': {'key': 'WFD-3173', 'parentkey': 'WFD-3135'}, 'WFD-3172': {'key': 'WFD-3172', 'parentkey': 'WFD-3135'}, 'WFD-3171': {'key': 'WFD-3171', 'parentkey': 'WFD-3135'}, 'WFD-3154': {'key': 'WFD-3154', 'parentkey': 'WFD-3087'}, 'WFD-3152': {'key': 'WFD-3152', 'parentkey': 'WFD-3087'}, 'WFD-3150': {'key': 'WFD-3150', 'parentkey': 'WFD-3087'}, 'WFD-3081': {'key': 'WFD-3081', 'parentkey': 'WFD-3061'}, 'WFD-3080': {'key': 'WFD-3080', 'parentkey': 'WFD-3061'}, 'WFD-3079': {'key': 'WFD-3079', 'parentkey': 'WFD-3061'}, 'WFD-3078': {'key': 'WFD-3078', 'parentkey': 'WFD-3061'}, 'WFD-3077': {'key': 'WFD-3077', 'parentkey': 'WFD-3061'}, 'WFD-3070': {'key': 'WFD-3070', 'parentkey': 'WFD-3061'}}
+    tempo_list.append(
+        {'id': 122540, 'parentkey': 'WFD-3350', 'key': 'WFD-3419', 'customer': 'AFHV', 'timeSpentSeconds': 5400,
+         'issuetype': 'Sub-task', 'summary': 'Testing',
+         'tempocomment': 'Changed convert video to a subflow due to finding out AFV is on AWS. Finished testing.',
+         'parentsummary': 'Testing'})
+    tempo_list.append(
+        {'id': 122541, 'parentkey': 'WFD-3350', 'key': 'WFD-3421', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Sub-task', 'summary': 'Create README', 'tempocomment': 'Created README and uploaded to Github',
+         'parentsummary': 'Create README'})
+    tempo_list.append(
+        {'id': 123144, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 7200,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - add new Jira fields RE Version and RE Type', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123145, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 5400,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - cycle sprints, stats, build board', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123148, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - team hours with Customer to Korinne', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123149, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - AFHV POC discussion', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123152, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD - gitprime stats',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122661, 'parentkey': 'WFD-2859', 'key': 'WFD-3474', 'customer': 'Spotify', 'timeSpentSeconds': 2040,
+         'issuetype': 'Sub-task', 'summary': 'Look over workflows', 'tempocomment': 'Done.',
+         'parentsummary': 'Look over workflows'})
+    tempo_list.append(
+        {'id': 122662, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Scrum and scoping',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122795, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Kafka meeting',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122666, 'parentkey': 'WFD-3347', 'key': 'WFD-3347', 'customer': 'Amazon', 'timeSpentSeconds': 13380,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-3193 | Create Movie Placeholders',
+         'tempocomment': 'Made changes to the workflow and ran a test of the new requirements. Analyzed result and emailed the client to ask them to take a look/run some tests and then have a call to hash out what I hope to be the tail end of this request',
+         'parentsummary': 'UAT | WFD-3193 | Create Movie Placeholders'})
+    tempo_list.append(
+        {'id': 122814, 'parentkey': 'WFD-3352', 'key': 'WFD-3408', 'customer': 'AFHV', 'timeSpentSeconds': 14400,
+         'issuetype': 'Sub-task', 'summary': '(6) Testing',
+         'tempocomment': 'Tested ALMOST all of the workflow successfully, in context of the app. However, one call (the call to start the muscially app) is not working for me still. ',
+         'parentsummary': '(6) Testing'})
+    tempo_list.append(
+        {'id': 122700, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD Standup/Grooming',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122782, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup',
+         'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 122783, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Grooming', 'parentsummary': 'Estimation'})
+    tempo_list.append(
+        {'id': 122887, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 2700,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow',
+         'tempocomment': 'discussing how to proceed with AFV ReAndroid project', 'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 122888, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'time tracking',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122784, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Meet with Mark on WF Team plan',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122889, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122785, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Learning about Kafka',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122786, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'AFV Android POC talk',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122890, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scoping',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122891, 'parentkey': 'WFD-3310', 'key': 'WFD-3310', 'customer': 'Spotify', 'timeSpentSeconds': 2700,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-3104  Prepare Assets for CMS',
+         'tempocomment': 'WFD-3310 checking if Spotify Vantage templates were ready. They weren’t',
+         'parentsummary': 'UAT | WFD-3104  Prepare Assets for CMS'})
+    tempo_list.append(
+        {'id': 122892, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 3600,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'communicating with NFL about Vodzilla UAT. Getting setup to continue working on it',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122893, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 15300,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'Testing the workflows to get success when handling files on their system and interfacing with elemental live',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122797, 'parentkey': 'WFD-3352', 'key': 'WFD-3352', 'customer': 'AFHV', 'timeSpentSeconds': 7200,
+         'issuetype': 'Story', 'summary': 'SCOPE(23) - musical.ly - Social Network Distribution',
+         'tempocomment': 'Helping move this along as best as possible',
+         'parentsummary': 'SCOPE(23) - musical.ly - Social Network Distribution'})
+    tempo_list.append(
+        {'id': 122798, 'parentkey': 'WFD-3351', 'key': 'WFD-3351', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Story', 'summary': 'SCOPE(23) - Instagram - Social Network Distribution',
+         'tempocomment': 'Helping move this along as best as possible',
+         'parentsummary': 'SCOPE(23) - Instagram - Social Network Distribution'})
+    tempo_list.append(
+        {'id': 122799, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'Catching up after vacation', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122800, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'Looking into open source csv libraries to see if there is a better way to parse csvs in Java for our workflow functions',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122801, 'parentkey': 'WFD-2859', 'key': 'WFD-2859', 'customer': 'Spotify', 'timeSpentSeconds': 900,
+         'issuetype': 'Story', 'summary': 'SCOPE(12) - Share Assets with NY', 'tempocomment': 'Help',
+         'parentsummary': 'SCOPE(12) - Share Assets with NY'})
+    tempo_list.append(
+        {'id': 122802, 'parentkey': 'WFD-3086', 'key': 'WFD-3439', 'customer': 'Herbalife', 'timeSpentSeconds': 1740,
+         'issuetype': 'Sub-task', 'summary': '(.5) Review Workflows', 'tempocomment': 'Done',
+         'parentsummary': '(.5) Review Workflows'})
+    tempo_list.append(
+        {'id': 122806, 'parentkey': 'WFD-3086', 'key': 'WFD-3443', 'customer': 'Herbalife', 'timeSpentSeconds': 4740,
+         'issuetype': 'Sub-task', 'summary': '(1) Make change to use proxy to regen proxy', 'tempocomment': 'Done',
+         'parentsummary': '(1) Make change to use proxy to regen proxy'})
+    tempo_list.append(
+        {'id': 122807, 'parentkey': 'WFD-2859', 'key': 'WFD-3004', 'customer': 'Spotify', 'timeSpentSeconds': 7500,
+         'issuetype': 'Sub-task', 'summary': 'bulk transfer collection assets',
+         'tempocomment': 'Updated code for Aspera information. Ran some tests but was unable to successfully transer. Seems to be due to bad credentials from client.',
+         'parentsummary': 'bulk transfer collection assets'})
+    tempo_list.append(
+        {'id': 122808, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup',
+         'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 122809, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 2100, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Scoping', 'parentsummary': 'Estimation'})
+    tempo_list.append({'id': 122810, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Other',
+                       'tempocomment': 'Testing what I thought was a query step bug', 'parentsummary': 'Other'})
+    tempo_list.append(
+        {'id': 122811, 'parentkey': 'WFD-3352', 'key': 'WFD-3352', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Story', 'summary': 'SCOPE(23) - musical.ly - Social Network Distribution',
+         'tempocomment': 'Helping Alex with some Groovy step logic.',
+         'parentsummary': 'SCOPE(23) - musical.ly - Social Network Distribution'})
+    tempo_list.append(
+        {'id': 122843, 'parentkey': 'WFD-3352', 'key': 'WFD-3408', 'customer': 'AFHV', 'timeSpentSeconds': 7440,
+         'issuetype': 'Sub-task', 'summary': '(6) Testing',
+         'tempocomment': 'Completed testing, everything is looking good, Lior confirmed',
+         'parentsummary': '(6) Testing'})
+    tempo_list.append(
+        {'id': 123132, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD standup/grooming',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123157, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD - UAT review',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123159, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD - Internal training',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123163, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - updating UAT tickets with SA and links to story',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122844, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup',
+         'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 122845, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Grooming', 'parentsummary': 'Estimation'})
+    tempo_list.append(
+        {'id': 122846, 'parentkey': 'WFD-3478', 'key': 'WFD-3478', 'customer': 'WB Archive', 'timeSpentSeconds': 3600,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-3231 | Duplicate Asset Report WB',
+         'tempocomment': "Talked with Lior and completed pushing the workflow to the new branch I created on the levels beyond repo. Didn't realize I hadn't pushed it there and it took some time to sort it out",
+         'parentsummary': 'UAT | WFD-3231 | Duplicate Asset Report WB'})
+    tempo_list.append(
+        {'id': 122847, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings',
+         'tempocomment': 'scrum and scope and task up new work', 'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122864, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Workflow Team Direction',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122876, 'parentkey': 'WFD-3486', 'key': 'WFD-3486', 'customer': 'WB Archive', 'timeSpentSeconds': 10800,
+         'issuetype': 'Story', 'summary': 'Resume Retrieve/Export Testing', 'tempocomment': 'Modifications and Testing',
+         'parentsummary': 'Resume Retrieve/Export Testing'})
+    tempo_list.append(
+        {'id': 122877, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'Discussing Kanban transitioning topics', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122878, 'parentkey': 'WFD-2739', 'key': 'WFD-2739', 'customer': 'WBITV', 'timeSpentSeconds': 5520,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2372 | Updates to OAP',
+         'tempocomment': 'Completed dev for what will hopefully prove to be the end of this ticket. Will wait for client confirmation and will close the request out upon once I get positive feedback from the client',
+         'parentsummary': 'UAT | WFD-2372 | Updates to OAP'})
+    tempo_list.append(
+        {'id': 122904, 'parentkey': 'WFD-2859', 'key': 'WFD-3004', 'customer': 'Spotify', 'timeSpentSeconds': 8880,
+         'issuetype': 'Sub-task', 'summary': 'bulk transfer collection assets',
+         'tempocomment': 'Did more testing with aspera on Spotifys system. Still running into issues. Need to get on a call with client.',
+         'parentsummary': 'bulk transfer collection assets'})
+    tempo_list.append(
+        {'id': 122879, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 5100,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Internal Workflow meeting',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122885, 'parentkey': 'WFD-3377', 'key': 'WFD-3480', 'customer': 'AFHV', 'timeSpentSeconds': 5400,
+         'issuetype': 'Sub-task', 'summary': '(1.5) Develop Parent Workflows',
+         'tempocomment': 'Dev-ed parent workflows and started subflow',
+         'parentsummary': '(1.5) Develop Parent Workflows'})
+    tempo_list.append(
+        {'id': 122880, 'parentkey': 'WFD-3377', 'key': 'WFD-3377', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Story', 'summary': 'SCOPE(12) - mRSS Single Distribution ',
+         'tempocomment': 'Help with Spring Expressions', 'parentsummary': 'SCOPE(12) - mRSS Single Distribution '})
+    tempo_list.append(
+        {'id': 122881, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support',
+         'tempocomment': 'Help with Hallmark Delete issue', 'parentsummary': 'Workflow Support'})
+    tempo_list.append(
+        {'id': 122894, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 4500,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'NFL UAT- testing xml report delivery',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122895, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122896, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scoping',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122897, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 900,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'NFL UAT working on ftp step', 'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122898, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings',
+         'tempocomment': 'meeting to discuss future of workflow team', 'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122899, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 900,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'NFL UAT - figured out ftp isnt right to connect to NFL',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122900, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 3600,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'NFL UAT - discovered the Vitac uses FTPS and the FTPStep doesn’t support that. Using groovy to get around this',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122901, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'customer': 'Levels Beyond', 'timeSpentSeconds': 7200,
+         'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support',
+         'tempocomment': 'Robin - hallmark weird issue that shouldn’t happen\nwriting test workflow to confirm issue on Hallmark system',
+         'parentsummary': 'Workflow Support'})
+    tempo_list.append(
+        {'id': 122902, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 5400,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'Failed to get groovy working for FTPS. Trying curl now. Curl works on Command Line but it is failing in workflow. ',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 122903, 'parentkey': 'WFD-3086', 'key': 'WFD-3444', 'customer': 'Herbalife', 'timeSpentSeconds': 4380,
+         'issuetype': 'Sub-task', 'summary': '(1.5) Test',
+         'tempocomment': 'Tested on Herbalifes dev server. Testing was slow due to TV', 'parentsummary': '(1.5) Test'})
+    tempo_list.append(
+        {'id': 122905, 'parentkey': 'WFD-3314', 'key': 'WFD-3314', 'customer': 'Hallmark', 'timeSpentSeconds': 3000,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-3143 | Ingest Bulk Metadata From CSV',
+         'tempocomment': 'Spent more time looking into issues for client. Again it was user error and issues with Microsoft Excel auto formatting fields.',
+         'parentsummary': 'UAT | WFD-3143 | Ingest Bulk Metadata From CSV'})
+    tempo_list.append(
+        {'id': 122906, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1200,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings',
+         'tempocomment': 'Meeting with team about future work.', 'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 122907, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 1200, 'issuetype': 'Time Tracking Task', 'summary': 'Other',
+                       'tempocomment': 'Emails/communication', 'parentsummary': 'Other'})
+    tempo_list.append(
+        {'id': 122917, 'parentkey': 'WFD-2739', 'key': 'WFD-2739', 'customer': 'WBITV', 'timeSpentSeconds': 4500,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2372 | Updates to OAP',
+         'tempocomment': 'Responded to a failed run of the Ingest to OAP workflow which was caused by what should have been a known error case. Responded to Brad. Additionally, it appears that WBITVs filesystem may have come unmounted on Dev. I was unable to test/prove my statement to Brad because of this. I have suggested that support be notified --- responded to several questions throughout the day',
+         'parentsummary': 'UAT | WFD-2372 | Updates to OAP'})
+    tempo_list.append(
+        {'id': 123007, 'parentkey': 'WFD-3377', 'key': 'WFD-3481', 'customer': 'AFHV', 'timeSpentSeconds': 18900,
+         'issuetype': 'Sub-task', 'summary': '(3) Get contents of XML and Replace with reachengine variables',
+         'tempocomment': 'Had to work with lior back and forth a lot regarding what the expectations were and to get the acs clearly defined. Additionally, parsing the thumbnail timecode was a little bit more involved than originally anticipated',
+         'parentsummary': '(3) Get contents of XML and Replace with reachengine variables'})
+    tempo_list.append(
+        {'id': 123006, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum n scoping n tasking',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 123133, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD standup/grooming',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123008, 'parentkey': 'WFD-3378', 'key': 'WFD-3484', 'customer': 'AFHV', 'timeSpentSeconds': 4320,
+         'issuetype': 'Sub-task', 'summary': '(1) Dev',
+         'tempocomment': 'decided that the best route to take with this was to combine the processes from 3377 and 3378, dev completed, will test together',
+         'parentsummary': '(1) Dev'})
+    tempo_list.append(
+        {'id': 123151, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 5400,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'WFD-3413 Instagram testing',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123156, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scoping',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 123158, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 5400,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'WFD-3413 Instagram testing',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123160, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'WFD-3413 Instagram testing',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123162, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'customer': 'Levels Beyond', 'timeSpentSeconds': 4500,
+         'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support', 'tempocomment': 'Robin',
+         'parentsummary': 'Workflow Support'})
+    tempo_list.append(
+        {'id': 123165, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 3600,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow',
+         'tempocomment': "fixing vm - needed to test something out on my vm. It wouldn't start. ",
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123167, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 4500,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'WFD-3413 testing instagram',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123169, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 5400,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - prep for process flow change meeting', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123171, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - process change meeting with Korinne', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123173, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 5400,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - start new Kanban board POC', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123023, 'parentkey': 'WFD-2898', 'key': 'WFD-2898', 'customer': None, 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings (billable)',
+         'tempocomment': 'AFV - SPIKE - Youtube and Facebook analytics', 'parentsummary': 'Meetings (billable)'})
+    tempo_list.append(
+        {'id': 122937, 'parentkey': 'WFD-3086', 'key': 'WFD-3444', 'customer': 'Herbalife', 'timeSpentSeconds': 1500,
+         'issuetype': 'Sub-task', 'summary': '(1.5) Test', 'tempocomment': 'Finished testing. Pushed to Github',
+         'parentsummary': '(1.5) Test'})
+    tempo_list.append(
+        {'id': 122932, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'workflow testing meeting',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122933, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Leads Meeting',
+         'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 122934, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 2700, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Grooming', 'parentsummary': 'Estimation'})
+    tempo_list.append(
+        {'id': 122982, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'engineering team discussion',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122979, 'parentkey': 'WFD-2859', 'key': 'WFD-3004', 'customer': 'Spotify', 'timeSpentSeconds': 7140,
+         'issuetype': 'Sub-task', 'summary': 'bulk transfer collection assets',
+         'tempocomment': "Got on a call with Spotify. Still couldn't get the API call working. Talked to Bill for a little help.",
+         'parentsummary': 'bulk transfer collection assets'})
+    tempo_list.append(
+        {'id': 122952, 'parentkey': 'WFD-3491', 'key': 'WFD-3491', 'customer': 'WBITV', 'timeSpentSeconds': 900,
+         'issuetype': 'Story',
+         'summary': 'SCOPE(9) - Update WBITV Workflows for 2.X - Fixes, query WBITV, WBITV request',
+         'tempocomment': 'Planning',
+         'parentsummary': 'SCOPE(9) - Update WBITV Workflows for 2.X - Fixes, query WBITV, WBITV request'})
+    tempo_list.append(
+        {'id': 122953, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Kanban official kickoff meeting',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 122955, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 4500,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'Team discussion with Ron.', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122957, 'parentkey': 'WFD-3377', 'key': 'WFD-3377', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Story', 'summary': 'SCOPE(12) - mRSS Single Distribution ', 'tempocomment': 'Help',
+         'parentsummary': 'SCOPE(12) - mRSS Single Distribution '})
+    tempo_list.append(
+        {'id': 122958, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'various interruptions',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 122960, 'parentkey': 'WFD-2859', 'key': 'WFD-2859', 'customer': 'Spotify', 'timeSpentSeconds': 1800,
+         'issuetype': 'Story', 'summary': 'SCOPE(12) - Share Assets with NY', 'tempocomment': 'Help',
+         'parentsummary': 'SCOPE(12) - Share Assets with NY'})
+    tempo_list.append(
+        {'id': 122990, 'parentkey': 'WFD-3383', 'key': 'WFD-3518', 'customer': 'JC Penney', 'timeSpentSeconds': 6420,
+         'issuetype': 'Sub-task', 'summary': 'Subtract start time from given time code',
+         'tempocomment': 'Started working on calculating an offset timecode.',
+         'parentsummary': 'Subtract start time from given time code'})
+    tempo_list.append(
+        {'id': 123079, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup',
+         'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 123080, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 2700, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Scoping', 'parentsummary': 'Estimation'})
+    tempo_list.append({'id': 123081, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 3600, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Planning JCP and other tickets from scoping', 'parentsummary': 'Estimation'})
+    tempo_list.append(
+        {'id': 123082, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Other', 'tempocomment': 'Looking over native connectors sheet',
+         'parentsummary': 'Other'})
+    tempo_list.append({'id': 123083, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 2400, 'issuetype': 'Time Tracking Task', 'summary': 'Other',
+                       'tempocomment': 'Updating UAT tickets', 'parentsummary': 'Other'})
+    tempo_list.append(
+        {'id': 123084, 'parentkey': 'WFD-2898', 'key': 'WFD-2898', 'customer': None, 'timeSpentSeconds': 1200,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings (billable)',
+         'tempocomment': 'AFV - Talking to Lior about Facebook and Twitter tickets',
+         'parentsummary': 'Meetings (billable)'})
+    tempo_list.append(
+        {'id': 123085, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Other', 'tempocomment': 'Emails/communication',
+         'parentsummary': 'Other'})
+    tempo_list.append(
+        {'id': 123134, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 2700,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management', 'tempocomment': 'WFD standup/grooming',
+         'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123024, 'parentkey': 'WFD-3377', 'key': 'WFD-3482', 'customer': 'AFHV', 'timeSpentSeconds': 11040,
+         'issuetype': 'Sub-task', 'summary': '(1.5) Transcode, Thumbnail, and Deliver XML',
+         'tempocomment': 'Had to redevelop some aspects of the workflow after slack conversations with Lior. Also, I neglected to take into account that the client system will be running in aws, so had to make some additional changes. ',
+         'parentsummary': '(1.5) Transcode, Thumbnail, and Deliver XML'})
+    tempo_list.append(
+        {'id': 123174, 'parentkey': 'WFD-3300', 'key': 'WFD-3300', 'customer': 'Hallmark', 'timeSpentSeconds': 4500,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-3142 Export Metadata From Search Results',
+         'tempocomment': 'testing hallmark export',
+         'parentsummary': 'UAT | WFD-3142 Export Metadata From Search Results'})
+    tempo_list.append(
+        {'id': 123176, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 123177, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scoping',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 123178, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 3600,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'WFD-3413 testing instagram',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123180, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 900,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement', 'tempocomment': 'nfl response',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 123182, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 900,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'testing instagram',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123184, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 2700,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow', 'tempocomment': 'WFD-3413 testing instagram',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123185, 'parentkey': 'WFD-3351', 'key': 'WFD-3414', 'customer': 'AFHV', 'timeSpentSeconds': 900,
+         'issuetype': 'Sub-task', 'summary': 'Wind Down', 'tempocomment': 'WFD-3414 wrote the readme',
+         'parentsummary': 'Wind Down'})
+    tempo_list.append(
+        {'id': 123186, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': "WFD - add status' for new Kanban fl", 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123187, 'parentkey': 'WFD-312', 'key': 'WFD-312', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Workflow Support', 'tempocomment': 'Robin',
+         'parentsummary': 'Workflow Support'})
+    tempo_list.append(
+        {'id': 123188, 'parentkey': 'WFD-340', 'key': 'WFD-340', 'customer': 'Levels Beyond', 'timeSpentSeconds': 1800,
+         'issuetype': 'Time Tracking Task', 'summary': 'Project Management',
+         'tempocomment': 'WFD - review AFHV with Amy and Korinne', 'parentsummary': 'Project Management'})
+    tempo_list.append(
+        {'id': 123189, 'parentkey': 'WFD-3351', 'key': 'WFD-3413', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Sub-task', 'summary': 'Testing Workflow',
+         'tempocomment': 'WFD-3413 testing and discussing what to do with the project.',
+         'parentsummary': 'Testing Workflow'})
+    tempo_list.append(
+        {'id': 123190, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 1800,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'Modifying the FTP call to get it to work.',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 123191, 'parentkey': 'WFD-3432', 'key': 'WFD-3432', 'customer': 'NFL', 'timeSpentSeconds': 7200,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement',
+         'tempocomment': 'Got the FTP call working by taking the curl command and running it from groovy.',
+         'parentsummary': 'UAT | WFD-2275 NFL Vodzilla Replacement'})
+    tempo_list.append(
+        {'id': 123192, 'parentkey': 'WFD-3310', 'key': 'WFD-3310', 'customer': 'Spotify', 'timeSpentSeconds': 900,
+         'issuetype': 'UAT', 'summary': 'UAT | WFD-3104  Prepare Assets for CMS',
+         'tempocomment': 'call with Spotify to test out the workflow with Nick Hybl.',
+         'parentsummary': 'UAT | WFD-3104  Prepare Assets for CMS'})
+    tempo_list.append(
+        {'id': 123021, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 3600,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'scrum n scope',
+         'parentsummary': 'Meetings'})
+    tempo_list.append(
+        {'id': 123030, 'parentkey': 'WFD-3383', 'key': 'WFD-3518', 'customer': 'JC Penney', 'timeSpentSeconds': 3360,
+         'issuetype': 'Sub-task', 'summary': 'Subtract start time from given time code',
+         'tempocomment': 'Done. Had to put a bunch of calculations into the workflow to get the offset from 0 in a timecode format.',
+         'parentsummary': 'Subtract start time from given time code'})
+    tempo_list.append(
+        {'id': 123205, 'parentkey': 'WFD-3377', 'key': 'WFD-3483', 'customer': 'AFHV', 'timeSpentSeconds': 16680,
+         'issuetype': 'Sub-task', 'summary': '(4) Test',
+         'tempocomment': 'Tested, ran into some issues, will finish testing tomorrow', 'parentsummary': '(4) Test'})
+    tempo_list.append(
+        {'id': 123033, 'parentkey': 'WFD-3383', 'key': 'WFD-3519', 'customer': 'JC Penney', 'timeSpentSeconds': 3600,
+         'issuetype': 'Sub-task', 'summary': 'Testing',
+         'tempocomment': 'Did some testing and bug fixing locally. Timecode seems to be calculating correctly.',
+         'parentsummary': 'Testing'})
+    tempo_list.append(
+        {'id': 123065, 'parentkey': 'WFD-3471', 'key': 'WFD-3525', 'customer': 'Hallmark', 'timeSpentSeconds': 3480,
+         'issuetype': 'Sub-task', 'summary': 'Planning',
+         'tempocomment': 'Done. Had some issues with merge conflicts when trying to merge to local repo. Planning took a little longer than expected.',
+         'parentsummary': 'Planning'})
+    tempo_list.append(
+        {'id': 123066, 'parentkey': 'WFD-3471', 'key': 'WFD-3526', 'customer': 'Hallmark', 'timeSpentSeconds': 1380,
+         'issuetype': 'Sub-task', 'summary': 'Update asset name for timeline and non-timeline', 'tempocomment': 'Done',
+         'parentsummary': 'Update asset name for timeline and non-timeline'})
+    tempo_list.append(
+        {'id': 123070, 'parentkey': 'WFD-3471', 'key': 'WFD-3527', 'customer': 'Hallmark', 'timeSpentSeconds': 1740,
+         'issuetype': 'Sub-task', 'summary': 'Verify collections and categories',
+         'tempocomment': 'Added logic for verifying categories', 'parentsummary': 'Verify collections and categories'})
+    tempo_list.append(
+        {'id': 123071, 'parentkey': 'WFD-3471', 'key': 'WFD-3527', 'customer': 'Hallmark', 'timeSpentSeconds': 1200,
+         'issuetype': 'Sub-task', 'summary': 'Verify collections and categories', 'tempocomment': 'Done.',
+         'parentsummary': 'Verify collections and categories'})
+    tempo_list.append(
+        {'id': 123072, 'parentkey': 'WFD-3471', 'key': 'WFD-3528', 'customer': 'Hallmark', 'timeSpentSeconds': 1800,
+         'issuetype': 'Sub-task', 'summary': 'Add/remove categories from asset', 'tempocomment': 'Done.',
+         'parentsummary': 'Add/remove categories from asset'})
+    tempo_list.append(
+        {'id': 123074, 'parentkey': 'WFD-311', 'key': 'WFD-311', 'customer': 'Levels Beyond', 'timeSpentSeconds': 900,
+         'issuetype': 'Time Tracking Task', 'summary': 'Meetings', 'tempocomment': 'Standup',
+         'parentsummary': 'Meetings'})
+    tempo_list.append({'id': 123075, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 1800, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Scoping', 'parentsummary': 'Estimation'})
+    tempo_list.append({'id': 123076, 'parentkey': 'WFD-2024', 'key': 'WFD-2024', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 2700, 'issuetype': 'Time Tracking Task', 'summary': 'Other',
+                       'tempocomment': 'Update/closing UAT tickets', 'parentsummary': 'Other'})
+    tempo_list.append(
+        {'id': 123077, 'parentkey': 'WFD-3377', 'key': 'WFD-3377', 'customer': 'AFHV', 'timeSpentSeconds': 1800,
+         'issuetype': 'Story', 'summary': 'SCOPE(12) - mRSS Single Distribution ', 'tempocomment': 'Helping Alex',
+         'parentsummary': 'SCOPE(12) - mRSS Single Distribution '})
+    tempo_list.append({'id': 123078, 'parentkey': 'WFD-2432', 'key': 'WFD-2432', 'customer': 'Levels Beyond',
+                       'timeSpentSeconds': 5400, 'issuetype': 'Time Tracking Task', 'summary': 'Estimation',
+                       'tempocomment': 'Planning Hallmark ticket and talking to Matt about said ticket.',
+                       'parentsummary': 'Estimation'})
+    tempo_list.append(
+        {'id': 123203, 'parentkey': 'WFD-3471', 'key': 'WFD-3529', 'customer': 'Hallmark', 'timeSpentSeconds': 7080,
+         'issuetype': 'Sub-task', 'summary': 'Add/remove collections from asset', 'tempocomment': 'Done.',
+         'parentsummary': 'Add/remove collections from asset'})
+    {'WFD-3529': {'key': 'WFD-3529', 'parentkey': 'WFD-3471'}, 'WFD-3528': {'key': 'WFD-3528', 'parentkey': 'WFD-3471'},
+     'WFD-3527': {'key': 'WFD-3527', 'parentkey': 'WFD-3471'}, 'WFD-3526': {'key': 'WFD-3526', 'parentkey': 'WFD-3471'},
+     'WFD-3525': {'key': 'WFD-3525', 'parentkey': 'WFD-3471'}, 'WFD-3519': {'key': 'WFD-3519', 'parentkey': 'WFD-3383'},
+     'WFD-3518': {'key': 'WFD-3518', 'parentkey': 'WFD-3383'}, 'WFD-3484': {'key': 'WFD-3484', 'parentkey': 'WFD-3378'},
+     'WFD-3483': {'key': 'WFD-3483', 'parentkey': 'WFD-3377'}, 'WFD-3482': {'key': 'WFD-3482', 'parentkey': 'WFD-3377'},
+     'WFD-3481': {'key': 'WFD-3481', 'parentkey': 'WFD-3377'}, 'WFD-3480': {'key': 'WFD-3480', 'parentkey': 'WFD-3377'},
+     'WFD-3474': {'key': 'WFD-3474', 'parentkey': 'WFD-2859'}, 'WFD-3444': {'key': 'WFD-3444', 'parentkey': 'WFD-3086'},
+     'WFD-3443': {'key': 'WFD-3443', 'parentkey': 'WFD-3086'}, 'WFD-3439': {'key': 'WFD-3439', 'parentkey': 'WFD-3086'},
+     'WFD-3421': {'key': 'WFD-3421', 'parentkey': 'WFD-3350'}, 'WFD-3419': {'key': 'WFD-3419', 'parentkey': 'WFD-3350'},
+     'WFD-3414': {'key': 'WFD-3414', 'parentkey': 'WFD-3351'}, 'WFD-3413': {'key': 'WFD-3413', 'parentkey': 'WFD-3351'},
+     'WFD-3408': {'key': 'WFD-3408', 'parentkey': 'WFD-3352'}, 'WFD-3004': {'key': 'WFD-3004', 'parentkey': 'WFD-2859'}}
+    jira_sub_dict['WFD-3529'] = {'key': 'WFD-3529', 'parentkey': 'WFD-3471'}
+    jira_sub_dict['WFD-3528'] = {'key': 'WFD-3528', 'parentkey': 'WFD-3471'}
+    jira_sub_dict['WFD-3527'] = {'key': 'WFD-3527', 'parentkey': 'WFD-3471'}
+    jira_sub_dict['WFD-3526'] = {'key': 'WFD-3526', 'parentkey': 'WFD-3471'}
+    jira_sub_dict['WFD-3525'] = {'key': 'WFD-3525', 'parentkey': 'WFD-3471'}
+    jira_sub_dict['WFD-3519'] = {'key': 'WFD-3519', 'parentkey': 'WFD-3383'}
+    jira_sub_dict['WFD-3518'] = {'key': 'WFD-3518', 'parentkey': 'WFD-3383'}
+    jira_sub_dict['WFD-3484'] = {'key': 'WFD-3484', 'parentkey': 'WFD-3378'}
+    jira_sub_dict['WFD-3483'] = {'key': 'WFD-3483', 'parentkey': 'WFD-3377'}
+    jira_sub_dict['WFD-3482'] = {'key': 'WFD-3482', 'parentkey': 'WFD-3377'}
+    jira_sub_dict['WFD-3481'] = {'key': 'WFD-3481', 'parentkey': 'WFD-3377'}
+    jira_sub_dict['WFD-3480'] = {'key': 'WFD-3480', 'parentkey': 'WFD-3377'}
+    jira_sub_dict['WFD-3474'] = {'key': 'WFD-3474', 'parentkey': 'WFD-2859'}
+    jira_sub_dict['WFD-3444'] = {'key': 'WFD-3444', 'parentkey': 'WFD-3086'}
+    jira_sub_dict['WFD-3443'] = {'key': 'WFD-3443', 'parentkey': 'WFD-3086'}
+    jira_sub_dict['WFD-3439'] = {'key': 'WFD-3439', 'parentkey': 'WFD-3086'}
+    jira_sub_dict['WFD-3421'] = {'key': 'WFD-3421', 'parentkey': 'WFD-3350'}
+    jira_sub_dict['WFD-3419'] = {'key': 'WFD-3419', 'parentkey': 'WFD-3350'}
+    jira_sub_dict['WFD-3414'] = {'key': 'WFD-3414', 'parentkey': 'WFD-3351'}
+    jira_sub_dict['WFD-3413'] = {'key': 'WFD-3413', 'parentkey': 'WFD-3351'}
+    jira_sub_dict['WFD-3408'] = {'key': 'WFD-3408', 'parentkey': 'WFD-3352'}
+    jira_sub_dict['WFD-3004'] = {'key': 'WFD-3004', 'parentkey': 'WFD-2859'}
+    jira_parent_dict['WFD-3491'] = {'key': 'WFD-3491', 'customer': 'WBITV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(9) - Update WBITV Workflows for 2.X - Fixes, query WBITV, WBITV request',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'To Do'}
+    jira_parent_dict['WFD-3486'] = {'key': 'WFD-3486', 'customer': 'WB Archive', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'Resume Retrieve/Export Testing', 'issuetype': 'Story',
+                                    'billstate': None, 'status': 'In Progress'}
+    jira_parent_dict['WFD-3478'] = {'key': 'WFD-3478', 'customer': 'WB Archive', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-3231 | Duplicate Asset Report WB', 'issuetype': 'UAT',
+                                    'billstate': None, 'status': 'In Progress'}
+    jira_parent_dict['WFD-3471'] = {'key': 'WFD-3471', 'customer': 'Hallmark', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(4) - Updates to M(m)etadata ingest workflow',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-3432'] = {'key': 'WFD-3432', 'customer': 'NFL', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-2275 NFL Vodzilla Replacement', 'issuetype': 'UAT',
+                                    'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-3383'] = {'key': 'WFD-3383', 'customer': 'JC Penney', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(4) - Export To KeyFrame - fix timecode discrepancies -',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-3378'] = {'key': 'WFD-3378', 'customer': 'AFHV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(2) - Multi - mRSS Distribution ', 'issuetype': 'Story',
+                                    'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-3377'] = {'key': 'WFD-3377', 'customer': 'AFHV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(12) - mRSS Single Distribution ', 'issuetype': 'Story',
+                                    'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-3352'] = {'key': 'WFD-3352', 'customer': 'AFHV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(23) - musical.ly - Social Network Distribution',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'UAT'}
+    jira_parent_dict['WFD-3351'] = {'key': 'WFD-3351', 'customer': 'AFHV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(23) - Instagram - Social Network Distribution',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'UAT'}
+    jira_parent_dict['WFD-3350'] = {'key': 'WFD-3350', 'customer': 'AFHV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(23) - Twitter - Social Network Distribution',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'UAT'}
+    jira_parent_dict['WFD-3347'] = {'key': 'WFD-3347', 'customer': 'Amazon', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-3193 | Create Movie Placeholders', 'issuetype': 'UAT',
+                                    'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-3314'] = {'key': 'WFD-3314', 'customer': 'Hallmark', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-3143 | Ingest Bulk Metadata From CSV', 'issuetype': 'UAT',
+                                    'billstate': 'Billable', 'status': 'Done'}
+    jira_parent_dict['WFD-3310'] = {'key': 'WFD-3310', 'customer': 'Spotify', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-3104  Prepare Assets for CMS', 'issuetype': 'UAT',
+                                    'billstate': 'Billable', 'status': 'Done'}
+    jira_parent_dict['WFD-3300'] = {'key': 'WFD-3300', 'customer': 'Hallmark', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-3142 Export Metadata From Search Results', 'issuetype': 'UAT',
+                                    'billstate': 'Billable', 'status': 'Done'}
+    jira_parent_dict['WFD-3086'] = {'key': 'WFD-3086', 'customer': 'Herbalife', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(4): Herbalife -- Change Proxy Workflows to Use Proxy to regen Proxy if Source is Truncated',
+                                    'issuetype': 'Story', 'billstate': 'Billable', 'status': 'UAT'}
+    jira_parent_dict['WFD-2898'] = {'key': 'WFD-2898', 'customer': None, 'totaltimeSpentSeconds': 0,
+                                    'summary': 'Meetings (billable)', 'issuetype': 'Time Tracking Task',
+                                    'billstate': None, 'status': 'New'}
+    jira_parent_dict['WFD-2859'] = {'key': 'WFD-2859', 'customer': 'Spotify', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'SCOPE(12) - Share Assets with NY', 'issuetype': 'Story',
+                                    'billstate': 'Billable', 'status': 'In Progress'}
+    jira_parent_dict['WFD-2739'] = {'key': 'WFD-2739', 'customer': 'WBITV', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'UAT | WFD-2372 | Updates to OAP', 'issuetype': 'UAT',
+                                    'billstate': 'Billable but Not Billed', 'status': 'In Progress'}
+    jira_parent_dict['WFD-2432'] = {'key': 'WFD-2432', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'Estimation', 'issuetype': 'Time Tracking Task',
+                                    'billstate': 'Not Billable', 'status': 'New'}
+    jira_parent_dict['WFD-2024'] = {'key': 'WFD-2024', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 0,
+                                    'summary': 'Other', 'issuetype': 'Time Tracking Task', 'billstate': 'Not Billable',
+                                    'status': 'New'}
+    jira_parent_dict['WFD-340'] = {'key': 'WFD-340', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 0,
+                                   'summary': 'Project Management', 'issuetype': 'Time Tracking Task',
+                                   'billstate': 'Not Billable', 'status': 'New'}
+    jira_parent_dict['WFD-312'] = {'key': 'WFD-312', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 0,
+                                   'summary': 'Workflow Support', 'issuetype': 'Time Tracking Task',
+                                   'billstate': 'Not Billable', 'status': 'New'}
+    jira_parent_dict['WFD-311'] = {'key': 'WFD-311', 'customer': 'Levels Beyond', 'totaltimeSpentSeconds': 0,
+                                   'summary': 'Meetings', 'issuetype': 'Time Tracking Task',
+                                   'billstate': 'Not Billable', 'status': 'New'}
