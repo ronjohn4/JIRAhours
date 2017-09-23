@@ -19,9 +19,9 @@
             <div class="cell">Total Hours</div>
         </div>
         <div class="row">
-            <div class="cell">{{"%0.2f" % (hours_billable / 3600)|float}}</div>
-            <div class="cell">{{"%0.2f" % (hours_nonbillable / 3600)|float}}</div>
-            <div class="cell">{{"%0.2f" % ((hours_billable + hours_nonbillable) / 3600)|float}}</div>
+            <div class="cell">{{"%0.2f" % (hours.billable / 3600)|float}}</div>
+            <div class="cell">{{"%0.2f" % (hours.nonbillable / 3600)|float}}</div>
+            <div class="cell">{{"%0.2f" % ((hours.billable + hours.nonbillable) / 3600)|float}}</div>
         </div>
     </div>
     <hr>
