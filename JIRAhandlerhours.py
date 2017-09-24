@@ -115,6 +115,7 @@ class JIRAhandlerhours(JIRAhandler):
                               'billstate': None,
                               'status': entry['fields']['status']['name']}
 
+                # Custom fields are handled here.  They are presented in the UI so will be blank if not found
                 if 'customfield_13500' in entry['fields']:
                     if entry['fields']['customfield_13500'] != None:
                         jira_entry['customer'] = entry['fields']['customfield_13500']['value']
