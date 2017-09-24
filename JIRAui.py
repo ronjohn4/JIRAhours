@@ -9,7 +9,7 @@ from flask import Flask, render_template, flash, request, make_response, redirec
 from JIRAhandlerhours import JIRAhandlerhours
 
 
-JIRA_BASE_URL = 'https://levelsbeyond.atlassian.net'
+JIRA_BASE_URL = 'https://yourdomainhere.atlassian.net'
 app = Flask('JIRAhrs')
 JiraHandle = JIRAhandlerhours(JIRA_BASE_URL)
 
