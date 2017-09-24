@@ -1,24 +1,22 @@
 import io
 import csv
 import logging
-import dateutil.parser
+import dateutil.parser  #for python3 use   pip3 install python-dateutil
 import calendar
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, flash, request, make_response, redirect, url_for, session
-from JIRAhandler import JIRAhandler
+from JIRAhandlerhours import JIRAhandlerhours
+
 
 JIRA_BASE_URL = 'https://levelsbeyond.atlassian.net'
-
 app = Flask('JIRAhrs')
-JiraHandle = JIRAhandler(JIRA_BASE_URL)
+JiraHandle = JIRAhandlerhours(JIRA_BASE_URL)
 
 # secret_key is used for flash messages
 app.config.update(dict(
     SECRET_KEY='development key goes here, should be complex'
 ))
-
-logging.basicConfig(level=logging.DEBUG)
 
 today = datetime.today()
 last_search = {
@@ -32,18 +30,18 @@ hours = {
 entries_parent = []
 entries_child = []
 
+logging.basicConfig(level=logging.DEBUG)
 
 # decorator used to secure Flask routes
 def authenticated_resource(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if JiraHandle.isAuth():
+        if JiraHandle.is_auth():
             return f(*args, **kwargs)
         else:
             session["wants_url"] = request.url
             return redirect(url_for('login'))
     return decorated
-
 
 @app.route('/')
 @app.route('/issues/', methods=['GET', 'POST'])
@@ -66,7 +64,6 @@ def issues():
         entries_parent = sorted(entries_parent, key=lambda k: (k['customer'] or "") + k['key'])
         entries_child = sorted(entries_child, key=lambda k: k['key'] + k['tempocomment'])
     return render_template('issues.html', entries=entries_parent, search=last_search, hours=hours)
-
 
 @app.route('/issues/csvall/', methods=['GET'])
 @authenticated_resource
@@ -97,7 +94,6 @@ def issuescsvall():
 
     return response
 
-
 @app.route('/issues/csv/', methods=['GET'])
 @authenticated_resource
 def issuescsv():
@@ -124,13 +120,11 @@ def issuescsv():
 
     return response
 
-
 @app.route('/issues/<id>')
 @authenticated_resource
 def issuesid(id=None):
     return render_template('issue.html', parent_entry=[v for v in entries_parent if v['key'] == id],
                            child_entry=[v for v in entries_child if v['parentkey'] == id])
-
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -141,7 +135,6 @@ def login():
         else:
             error = 'Invalid Credentials. Please try again.'
     return render_template('login.html', error=error)
-
 
 @app.route('/logout')
 def logout():
