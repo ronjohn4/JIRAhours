@@ -1,5 +1,4 @@
 # JIRAhours
-Pull all hours for a specific Project and Date Range from Tempo.  Find corresponding JIRA sub-task and stories.  Find stories for sub-tasks.
 This sample project show some best practices to use when integrating JIRA and Tempo data in a Python/Flask/requests driven app.
 
 Using the code is straight forward:
