@@ -13,8 +13,8 @@ class JIRAhandlerhours(JIRAhandler):
         HrsGet    Returns the compile JIRA and Tempo date given a JIRA project key and a date range.
     """
 
-    def __init__(self):
-        super.__init__(self)
+    def __init__(self, JiraBaseUrl):
+        super(self.__class__, self).__init__(JiraBaseUrl)
 
     def HrsGet(self, projectKey, fromDate, toDate):
         jira_sub_dict = {}
