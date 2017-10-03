@@ -1,15 +1,16 @@
-import io
-import csv
-import logging
-import dateutil.parser  #for python3 use   pip3 install python-dateutil
 import calendar
+import csv
+import io
+import logging
 from datetime import datetime
 from functools import wraps
-from flask import Flask, render_template, flash, request, make_response, redirect, url_for, session
-from JIRAhandlerhours import JIRAhandlerhours
 
+import dateutil.parser  # for python3 use   pip3 install python-dateutil
+from flask import Flask, render_template, request, make_response, redirect, url_for, session
 
-JIRA_BASE_URL = 'https://yourdomainhere.atlassian.net'
+from jirahours.JIRAhandlerhours import JIRAhandlerhours
+
+JIRA_BASE_URL = 'https://levelsbeyond.atlassian.net'
 app = Flask('JIRAhrs')
 JiraHandle = JIRAhandlerhours(JIRA_BASE_URL)
 

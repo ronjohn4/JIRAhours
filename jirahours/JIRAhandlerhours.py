@@ -1,7 +1,9 @@
 # Ron Johnson
 # 9/24/2017
 import json
-from JIRAhandler import JIRAhandler
+
+from jirahours.JIRAhandler import JIRAhandler
+
 
 class JIRAhandlerhours(JIRAhandler):
     """JIRAhandlerhours compiles JIRA and Tempo data specific to this application's needs for a given
