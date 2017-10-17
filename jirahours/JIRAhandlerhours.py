@@ -1,7 +1,6 @@
 # Ron Johnson
 # 9/24/2017
 import json
-
 from jirahours.JIRAhandler import JIRAhandler
 
 
