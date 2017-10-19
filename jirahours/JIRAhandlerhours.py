@@ -36,6 +36,7 @@ class JIRAhandlerhours(JIRAhandler):
             # create clean Tempo list
             for entry in json_return:
                 tempo_list.append({'id': entry['id'],
+                                   'billstate': None,
                                    'parentkey': entry['issue']['key'],
                                    'author': entry['author']['name'],
                                    'dateCreated': entry['dateCreated'],
@@ -132,11 +133,12 @@ class JIRAhandlerhours(JIRAhandler):
             'nonbillable': 0
         }
         for entry in tempo_list:
+            entry['billstate'] = jira_parent_dict[entry['parentkey']]['billstate']
             # sum hours per JIRA ticket and total
             # add up Tempo time for each Jira ticket
             jira_parent_dict[entry['parentkey']]['totaltimeSpentSeconds'] += entry['timeSpentSeconds']
 
-            if jira_parent_dict[entry['parentkey']]['billstate'] in ('Billable', 'Billable but Not Billed'):
+            if entry['billstate'] in ('Billable', 'Billable but Not Billed'):
                 hours['billable'] += entry['timeSpentSeconds']
             else:
                 hours['nonbillable'] += entry['timeSpentSeconds']
