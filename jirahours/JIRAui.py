@@ -74,6 +74,7 @@ def issuescsvall():
     for v in entries_child:
         d = dateutil.parser.parse(v['dateCreated'])
         csv_list.append({'customer': v['customer'],
+                        'billstate': v['billstate'],
                         'issuetype': v['issuetype'],
                         'key': v['key'],
                         'author': v['author'],
@@ -102,11 +103,12 @@ def issuescsv():
 
     for v in entries_parent:
         csv_list.append({'customer': v['customer'],
-            'issuetype': v['issuetype'],
-            'key': v['key'],
-            'hours': '{0:0.2f}'.format(v['totaltimeSpentSeconds'] / 3600),
-            'summary': v['summary'],''
-            'tempocomment': None})
+                        'billstate': v['billstate'],
+                        'issuetype': v['issuetype'],
+                        'key': v['key'],
+                        'hours': '{0:0.2f}'.format(v['totaltimeSpentSeconds'] / 3600),
+                        'summary': v['summary'],''
+                        'tempocomment': None})
 
     keys = csv_list[0].keys()
     output = io.StringIO()
