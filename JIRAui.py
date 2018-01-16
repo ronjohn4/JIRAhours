@@ -8,7 +8,7 @@ from functools import wraps
 import dateutil.parser  # for python3 use   pip3 install python-dateutil
 from flask import Flask, render_template, request, make_response, redirect, url_for, session
 
-from jirahours.JIRAhandlerhours import JIRAhandlerhours
+from JIRAhandlerhours import JIRAhandlerhours
 
 JIRA_BASE_URL = 'https://levelsbeyond.atlassian.net'
 app = Flask('JIRAhrs')
